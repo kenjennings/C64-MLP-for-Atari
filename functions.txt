@@ -1,0 +1,17 @@
+
+main.MainLoop
+	core_routines.WaitFrame
+	main.UpdateSprites
+		Sprite 0, joystick, player
+		collision_routines.CanMoveRight
+			collision_routines.TestBlocking
+		sprite_routines.MoveSpriteRight
+		collision_routines.CanMoveLeft
+			collision_routines.TestBlocking
+		sprite_routines.MoveSpriteLeft
+		collision_routines.CanMoveDown
+			collision_routines.TestBlocking
+		sprite_routines.MoveSpriteDown
+		collision_routines.CanMoveUp
+			collision_routines.TestBlocking
+		sprite_routines.MoveSpriteUp
