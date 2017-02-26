@@ -6,9 +6,11 @@
 ;;
 ;; Atari-fied for eclipse/wudsn/atasm by Ken Jennings
 ;; FYI -- comments with double ;; are Ken's for Atari
-;; Atari/atasm source available at:
+;; Atari/atasm source available at Google Drive:
 ;; https://drive.google.com/drive/folders/0B2m-YU97EHFER3RFZ3I1b25FM0k
-;; 
+;; And at Github here:
+;; https://github.com/kenjennings/C64-MLP-for-Atari
+;;
 ;===================================================================================================
 ;; #region "ChangeLog"
 ; Changelog
