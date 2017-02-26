@@ -196,7 +196,7 @@
 ;; P is the Player dimensions in color clocks
 ;; c, and . are character pixels.
 ;; * are the pixels of the Player's current character position
-;; x is the character pixels of the character(s) that should be r
+;; x is the character pixels of the character(s) that should be
 ;; tested to allow movement left or right.
 ;;
 ;; X Delta -1
@@ -291,18 +291,46 @@
 ;; Y Delta +2 = test position (left) X-1 or (right) X+2 at      Y-1, Y, Y+1
 ;; Y Delta +3 = test position (left) X-1 or (right) X+2 at      Y-1, Y, Y+1, Y+2
 ;; Y Delta +4 = test position (left) X-1 or (right) X+2 at      Y-1, Y, Y+1, Y+2
+;;
+;; When moving horizontally check these Vertical offsets based on the Y Delta.
+;; First byte is the offset to start at.  
+;; Each $01 byte after the first byte represents testing +1 position 
+;; from the previous test.
+;; The byte $00 means no more testing.
+;; This allows a table to variably describe 3 or 4 offsets.
+COLLIDE_LOOKUP_Y  
+    .byte $fe,$01,$01,$01,$00 ;; Y Delta -3, 4 tests from Y-2 to Y+1
+    .byte $fe,$01,$01,$01,$00 ;; Y Delta -2, 4 tests from Y-2 to Y+1
+    .byte $ff,$01,$01,$00,$00 ;; Y Delta -1, 3 tests from Y-1 to Y+1
+    .byte $ff,$01,$01,$00,$00 ;; Y Delta  0, 3 tests from Y-1 to Y+1
+    .byte $ff,$01,$01,$00,$00 ;; Y Delta +1, 3 tests from Y-1 to Y+1
+    .byte $ff,$01,$01,$00,$00 ;; Y Delta +2, 3 tests from Y-1 to Y+1
+    .byte $ff,$01,$01,$01,$00 ;; Y Delta +3, 4 tests from Y-1 to Y+2
+    .byte $ff,$01,$01,$01,$00 ;; Y Delta +4, 4 tests from Y-1 to Y+2
 ;; 
-;; Moving up from Y Delta -1:
+;; Moving UP from Y Delta -1:
 ;; X Delta -1 = test position Y-2 at X-1, X, X+1
 ;; X Delta  0 = test position Y-2 at X-1, X, X+1
 ;; X Delta +1 = test position Y-2 at X-1, X, X+1
 ;; X Delta +2 = test position Y-2 at      X, X+1
 ;;
-;; Moving down from Y Delta +2:
+;; Moving DOWN from Y Delta +2:
 ;; X Delta -1 = test position Y+2 at X-1, X, X+1
 ;; X Delta  0 = test position Y+2 at X-1, X, X+1
 ;; X Delta +1 = test position Y+2 at X-1, X, X+1
 ;; X Delta +2 = test position Y+2 at      X, X+1
+;;
+;; When moving vertically check these Horizontal offsets based on the X Delta.
+;; First byte is the offset to start at. (0 is valid here) 
+;; Each $01 byte after the first byte represents testing +1 position 
+;; from the previous test.
+;; The byte $00 means no more testing.
+;; This allows a table to variably describe 2 or 3 offsets.
+COLLIDE_LOOKUP_X
+    .byte $ff,$01,$01,$00 ;; X Delta -1, 3 tests from X-1 to X+1
+    .byte $ff,$01,$01,$00 ;; X Delta -0, 3 tests from X-1 to X+1
+    .byte $ff,$01,$01,$00 ;; X Delta +1, 3 tests from X-1 to X+1
+    .byte $00,$01,$00,$00 ;; X Delta +2, 2 tests from X   to X+1
 ;;
 ;; --------------------------------------------------------------------------
 ;;
@@ -387,93 +415,49 @@
 ;
 ; returns A = 0 we can move or A = 1 we are blocked
 ; X register is left intact
+;; PARAM7 == Adjusted X column (SPRITE_CHAR_POS_X - 1)
+;; PARAM6 == Index into COLLIDE_LOOKUP_Y (SPRITE_POS_Y_DELTA adjusted to 0, then * 5)
+;; PARAM5 == Adjusted Y row (SPRITE_CHAR_POS_Y - lookup from COLLIDE_LOOKUP_Y)
 ;--------------------------------------------------------------------------------
 ;; #region "CanMoveLeft"
 ;; The sprite may move up to the 2nd character position minus the max delta -1.
 .LOCAL
 CanMoveLeft
-												; border test
-;;		lda SPRITE_CHAR_POS_X,x				 ; if Char X is 0
-;;		bne @trimLeft
-;;		lda SPRITE_POS_X_DELTA,x				; and delta is 0
-;;		bne @trimLeft
-		
-		lda SPRITE_CHAR_POS_X,x  ; sprite is at < $26 (or 38)  
-		cmp #1				  ;; 38 means 1 column less than the last (39th) 
-		bne @checkLeft
-		lda SPRITE_POS_X_DELTA,x ; Can be centered,  and stops at -1
-		bpl @checkLeft
-		
-		lda #1						  ; return blocked
-		rts
-		
-;;@trimLeft
-;;		lda SPRITE_POS_X_DELTA,x		; fetch the X delta for this sprite
-;;		adc SPRITE_DELTA_TRIM_X,x       ; add delta trim X
-;; ;;		and #%111				       ; Mask the result for 0-7
-;;		and ~00000111 ;; atasm syntax
+		; border test
+		lda SPRITE_CHAR_POS_X,x  ;; sprite is at < $2 ?  
+		sta PARAM7 ;; if we need to use POS X later, then save it now
+		cmp #$01				  ;; 1 means 1 column more than the first (0th) 
 
-;;		beq @checkLeft				  ; if delta != 0 no need to check for a blocking
-										; character - we're not flush with the char set
-;;		lda #0						  ; load a return code of #0 and return
-;;		rts
+		;; The only way to get here is by crossing from X delta -1 on the 
+		;; previous character into X delta +2 for the current character.
+		;; Therefore, we are at the limit for X position and delta, so refuse to 
+		;; move any further.
+		beq ?Blocked
 
-@checkLeft
-;;		lda SPRITE_POS_Y_DELTA,x		; if the Y Delta is 0, we only need to check 2 characters
-;;		beq @checkLeft2				 ; on the direct left of the sprite base because we are 'flush'
-										; on the Y axis with the character map
+        ;; Moving from X Delta 2 is the only reason the left edge position
+        ;; will change, so only X Delta 2 requires collision test.
+        ;; All other deltas can return unblocked.
+        lda SPRITE_POS_X_DELTA,x
+        cmp #$02
+        bne ?Unblocked 		;; Everything not 2 is OK for movement
+        
+        ;; Adjust POS X to one column less (left) of the current position.
+		dec PARAM7 ;; saved earlier
 
-										; Here we aren't flush - so we have to check 3 characters
-
-		ldy SPRITE_CHAR_POS_Y,x		 ; fetch sprites Y character position (in screen memory)
-
-		iny ;; this is used for the right, but why wasn't it here for the left?
-
-		lda SCREEN_LINE_OFFSET_TABLE_LO,y       ; store the address in ZEROPAGE_POINTER_1
-		sta ZEROPAGE_POINTER_1
-		lda SCREEN_LINE_OFFSET_TABLE_HI,y
-		sta ZEROPAGE_POINTER_1 + 1
-		
-;;		lda SPRITE_CHAR_POS_X,x				 ; fetch sprites X position (in screen memory)
-;;		clc
-;;		adc #39								  ; add 39 (go down one row and one place to the left)
-;;		tay								     ; store it in the Y register
-		ldy SPRITE_CHAR_POS_X,x				 ; fetch sprites X position, store it in Y
-		dey
-		
-		lda (ZEROPAGE_POINTER_1),y		      ; fetch the character from screen mem
-		jsr TestBlocking						; test to see if it blocks
-		bne @blockedLeft						; returned 1  - so blocked
-
-;;@checkLeft2
-;;		ldy SPRITE_CHAR_POS_Y,x				 ; fetch the sprites Y position and store it in Y
-;;		dey								     ; decrement by 1 (so 1 character UP)
-;;		lda SCREEN_LINE_OFFSET_TABLE_LO,y       ; store that memory location in ZEROPAGE_POINTER_1
-;;		sta ZEROPAGE_POINTER_1
-;;		lda SCREEN_LINE_OFFSET_TABLE_HI,y 
-;;		sta ZEROPAGE_POINTER_1 + 1
-
-;;		ldy SPRITE_CHAR_POS_X,x				 ; get the sprites X position and store in Y
-;;		dey								     ; decrement by 1 (one character left)
-		
-;;		lda (ZEROPAGE_POINTER_1),y		      ; fetch the contents of screen mem 1 left and 1 up
-;;		jsr TestBlocking						; test for blocking
-;;		bne @blockedLeft
-
-;;		tya								     ; transfer screen X pos to the accumulator
-;;		clc		     
-;;		adc #40								 ; add 40 - bringing it one row down from the last
-;;		tay								     ; check made, then transfer it back to Y
-		
-;;		lda (ZEROPAGE_POINTER_1),y		      ; fetch the character from that screen location
-;;		jsr TestBlocking						; and test it for blocking
-;;		bne @blockedLeft
-
-		lda #0								  ; return value #0 = not blocked
+        ;; Decrementing the X position (in PARAM7) was the last difference 
+        ;; between testing left and right, because the remainder
+        ;; of the logic is all driven from the COLLIDE_LOOKUP_Y table.
+        
+        jsr TestCollisionX ; common code tests and loops.
+        
+        rts
+ 
+?Unblocked
+		lda #$00								  ; return value #0 = not blocked
 		rts
 
-@blockedLeft
-		lda #1				       ; we can't move, so load a #1 in A and return
+?Blocked
+		lda #$01				       ; we can't move, so load a #1 in A and return
 		rts
 
 ;; #endregion
@@ -488,97 +472,52 @@ CanMoveLeft
 ;
 ; returns A = 0 we can move or A = 1 we are blocked
 ; X register is left intact
+;; PARAM7 == Adjusted X column (SPRITE_CHAR_POS_X + 2)
+;; PARAM6 == Index into COLLIDE_LOOKUP_Y (SPRITE_POS_Y_DELTA adjusted to 0, then * 5)
+;; PARAM5 == Adjusted Y row (SPRITE_CHAR_POS_Y - lookup from COLLIDE_LOOKUP_Y)
 ;---------------------------------------------------------------------------------
-;; Lets see if I can figure this out on the Atari....
-;; The sprite may move up to the 38th character position plus the max delta 2.
- 
-
 ;; #region "CanMoveRight"
 .LOCAL
 CanMoveRight
-;;		clc				      ; simple right border check
-		lda SPRITE_CHAR_POS_X,x  ; sprite is at < $26 (or 38)  
-		cmp #38				  ;; 38 means 1 column less than the last (39th) 
-		bne @checkRight
-		lda SPRITE_POS_X_DELTA,x ; Can be centered,  and +1 but not +2
+		; border test
+		lda SPRITE_CHAR_POS_X,x  ;; sprite is at < $37 ?  
+		sta PARAM7 ;; if we need to use POS X later, then save it now
+		cmp #37				  ;; 37 means 1 column less than the last (39th),
+							;; because position 38 is also covered by the sprite 
+		bne ?checkRight
+        ;; We are at the limit for X position and delta, so refuse to 
+		;; move any further.
+		lda SPRITE_POS_X_DELTA,x ; column 37, delta +2 is the limit for movement 
 		cmp #2
-		bne @checkRight
+		beq ?Blocked
+
+?checkRight
+        ;; Moving from X Delta 2 is the only reason the right edge position
+        ;; will change, so only X Delta 2 requires collision test. 
+        ;; All other deltas can return unblocked.
+        lda SPRITE_POS_X_DELTA,x
+        cmp #2
+        bne ?Unblocked  		;; Everything not 2 is OK for movement
+        
+        ;; Adjust POS X to two column more (right) of the current position.
+		inc PARAM7 ;; saved earlier
+		inc PARAM7
+
+        ;; Incrementing the X position (in PARAM7) was the last difference 
+        ;; between testing left and right, because the remainder
+        ;; of the logic is all driven from the COLLIDE_LOOKUP_Y table.
+        
+        ;; Common code loops and tests
+        jsr TestCollisionX
 		
-		lda #1						  ; return blocked
 		rts
 
-;;		bne @trimRight
-;; ;;		clc
-;;		lda SPRITE_POS_X_DELTA,x		 ; and delta < $04
-;; ;;		cmp #4
-;;		bpl @trimRight
-		
-;;		lda #1						  ; return blocked
-;;		rts
-
-;;Not really understanding this
-		
-;;@trimRight
-;;		clc
-;;		lda SPRITE_POS_X_DELTA,x		; if Delta = 0, perform checks
-;;		adc SPRITE_DELTA_TRIM_X,x       ; add delta trim
-;; ;;		and #%111				       ; Mask the result for 0-7
-;;		and ~00000111 ;; atasm syntax
-
-;;		beq @checkRight
-
-;;		lda #0						  ; we can move, return 0
-;;		rts
-
-@checkRight
-;;		lda SPRITE_POS_Y_DELTA,x       ; flush check on Y - if so, only check 2 chars
-;;      beq @rightCheck2
-
-		ldy SPRITE_CHAR_POS_Y,x		 ; Check third character position - we are not flush with
-		iny						     ; the screen character coords
-		lda SCREEN_LINE_OFFSET_TABLE_LO,y
-		sta ZEROPAGE_POINTER_1
-		lda SCREEN_LINE_OFFSET_TABLE_HI,y
-		sta ZEROPAGE_POINTER_1 + 1
-		
-		ldy SPRITE_CHAR_POS_X,x				 ; fetch sprites X position, store it in Y
-		iny
-;;		iny
-
-		lda (ZEROPAGE_POINTER_1),y
-		jsr TestBlocking
-		bne @blockedRight
-		
-;;@rightCheck2
-;;		ldy SPRITE_CHAR_POS_Y,x
-;;		dey
-;;		lda SCREEN_LINE_OFFSET_TABLE_LO,y
-;;		sta ZEROPAGE_POINTER_1
-;;		lda SCREEN_LINE_OFFSET_TABLE_HI,y
-;;		sta ZEROPAGE_POINTER_1 + 1
-
-;;		ldy SPRITE_CHAR_POS_X,x
-;;		iny
-;;		iny
-
-;;		lda (ZEROPAGE_POINTER_1),y
-
-;;		jsr TestBlocking
-;;		bne @blockedRight
-
-;;		tya
-;;		clc
-;;		adc #40
-;;		tay
-;;		lda (ZEROPAGE_POINTER_1),y
-;;		jsr TestBlocking
-;;		bne @blockedRight
-
-		lda #0
+?Unblocked
+		lda #$00								  ; return value #0 = not blocked
 		rts
 
-@blockedRight
-		lda #1
+?Blocked
+		lda #$01				       ; we can't move, so load a #1 in A and return
 		rts
 
 ;; #endregion
@@ -593,91 +532,50 @@ CanMoveRight
 ;
 ; returns A = 0 we can move or A = 1 we are blocked
 ; X register is left intact
+;; PARAM7 == Adjusted X column (SPRITE_CHAR_POS_X - lookup from COLLIDE_LOOKUP_X) 
+;; PARAM6 == Index into COLLIDE_LOOKUP_X (SPRITE_POS_X_DELTA adjusted to 0, then * 4)
+;; PARAM5 == Adjusted Y row (SPRITE_CHAR_POS_Y - 2)
 ;---------------------------------------------------------------------------------
 ;; #region "CanMoveUp"
 .LOCAL
 CanMoveUp
-		lda SPRITE_POS_Y_DELTA,x  ; sprite is at < $26 (or 38)  
-		cmp #1				  ;; 38 means 1 column less than the last (39th) 
-		bne @checkUp
-		lda SPRITE_POS_Y_DELTA,x ; Can be centered,  and stops at -2
-		adc #$02 
-		bpl @checkUp
+        ;; border test
+        lda SPRITE_CHAR_POS_Y,x  ;; If sprite is not in position 5
+        sta PARAM5               ;; then test if movement possible.
+        cmp #5
+        bne ?checkUp
+        
+		lda SPRITE_POS_Y_DELTA,x  ; Sprite is in position 5
+		cmp #$FF				  ;; it cannot move past Delta -1
+		beq ?Blocked
+
+?checkUp
+        ;; Moving from Y Delta -1 is the only reason the top edge position
+        ;; will change, so only Y Delta -1 requires collision test. 
+        ;; All other deltas can return unblocked.
+		lda SPRITE_POS_Y_DELTA,x 
+		cmp #$FF 
+		bne ?Unblocked    ;; Everything not -1 can move.
+
+        ;; Adjust POS Y to two rows above the current position.
+		dec PARAM5 ;; saved earlier
+		dec PARAM5
+
+        ;; Decrementing the Y position (in PARAM5) was the last difference 
+        ;; between testing up and down, because the remainder
+        ;; of the logic is all driven from the COLLIDE_LOOKUP_X table.
+        
+        ;; Common code loops and tests
+        jsr TestCollisionY
 		
-		lda #1						  ; return blocked
 		rts
 
-;;		lda SPRITE_POS_Y_DELTA,x		; load Delta Y value
-;;		beq @checkUp				    ; if it's 0 we need to check characters
-
-;;		lda #0						  ; if not we can just return and move
-;;		rts
-
-
-@checkUp
-		ldy SPRITE_CHAR_POS_Y,x		 ; Check third character position - we are not flush with
-		dey						     ; the screen character coords
-		lda SCREEN_LINE_OFFSET_TABLE_LO,y
-		sta ZEROPAGE_POINTER_1
-		lda SCREEN_LINE_OFFSET_TABLE_HI,y
-		sta ZEROPAGE_POINTER_1 + 1
-		
-		ldy SPRITE_CHAR_POS_X,x				 ; fetch sprites X position, store it in Y
-;;		iny
-;;		iny
-
-		lda (ZEROPAGE_POINTER_1),y
-		jsr TestBlocking
-		bne @upBlocked
-
-
-;;		lda SPRITE_POS_X_DELTA,x		; Check X delta - if 0 we only need to check one
-;		adc SPRITE_DELTA_TRIM_X,x       ; add our trim and make keep within 0-7 range
-;		and #%111
-		
-;;		beq @checkUp2				   ; character above the player
-										; else we are not flush on X and need to check 2
-
-;;		ldy SPRITE_CHAR_POS_Y,x		 ; fetch the sprite Y char coord - store in Y
-;;		dey
-;;		dey						     ; subtract 2
-
-;;		lda SCREEN_LINE_OFFSET_TABLE_LO,y       ; fetch the address of screen line address
-;;		sta ZEROPAGE_POINTER_1
-;;		lda SCREEN_LINE_OFFSET_TABLE_HI,y
-;;		sta ZEROPAGE_POINTER_1 + 1
-
-;;		ldy SPRITE_CHAR_POS_x,x				 ; fetch X position
-;;		iny								     ; add one
-;; ;		iny								     ; extra for trim
-
-;;		lda (ZEROPAGE_POINTER_1),y
-
-;;		jsr TestBlocking
-;;		bne @upBlocked
-
-;;@checkUp2
-;;		ldy SPRITE_CHAR_POS_Y,x				 ; get the sprite Y char coordinate
-;;		dey								     ; subtract 2
-;;		dey
-;;		lda SCREEN_LINE_OFFSET_TABLE_LO,y       ; fetch the address of that line
-;;		sta ZEROPAGE_POINTER_1
-;;		lda SCREEN_LINE_OFFSET_TABLE_HI,y
-;;		sta ZEROPAGE_POINTER_1 + 1
-
-;;		ldy SPRITE_CHAR_POS_X,x				 ; fetch the sprite X char coordinate
-;		iny								     ; add one for trim
-
-;;		lda (ZEROPAGE_POINTER_1),y
-
-;;		jsr TestBlocking
-;;		bne @upBlocked
-
-		lda #0
+?Unblocked
+		lda #$00								  ; return value #0 = not blocked
 		rts
-		
-@upBlocked
-		lda #1
+
+?Blocked
+		lda #$01				       ; we can't move, so load a #1 in A and return
 		rts
 
 ;; #endregion
@@ -696,92 +594,220 @@ CanMoveUp
 ;; #region "CanMoveDown"
 .LOCAL
 CanMoveDown
-		lda SPRITE_CHAR_POS_Y,x  ; sprite is at < $26 (or 38)  
-		cmp #19				  ;; 19th Row is max
-		bne @downCheck
-		lda SPRITE_POS_Y_DELTA,x ; Can be centered,  and +1 and +2, but not +3
-		cmp #3
-		bne @downCheck
+        ;; border test
+        lda SPRITE_CHAR_POS_Y,x  ;; If sprite is not in position 16
+        sta PARAM5               ;; then test if movement possible.
+        cmp #16
+        bne ?checkDown
+        
+		lda SPRITE_POS_Y_DELTA,x  ; Sprite is in position 16 
+		cmp #2				  ;; it cannot move past Delta 2
+		beq ?Blocked
+
+?checkDown
+        ;; Moving from Y Delta 2 is the only reason the bottom edge position
+        ;; will change, so only Y Delta 2 requires collision test. 
+        ;; All other deltas can return unblocked.
+		lda SPRITE_POS_Y_DELTA,x 
+		cmp #2
+		bne ?Unblocked    ;; Everything not 2 can move.
+
+        ;; Adjust POS Y to two rows below the current position.
+		inc PARAM5 ;; saved earlier
+		inc PARAM5
+
+        ;; Incrementing the Y position (in PARAM5) was the last difference 
+        ;; between testing up and down, because the remainder
+        ;; of the logic is all driven from the COLLIDE_LOOKUP_X table.
+        
+        ;; Common code loops and tests
+        jsr TestCollisionY
 		
-		lda #1						  ; return blocked
 		rts
 
-;;		lda SPRITE_POS_Y_DELTA,x				; fetch Y delta for this sprite
-;;		beq @downCheck						  ; only check if 0 - and flush with screen characters
-
-;;		lda #0								  ; else return with 0 - we can move
-;;		rts
-
-@downCheck
-		ldy SPRITE_CHAR_POS_Y,x		 ; Check third character position - we are not flush with
-		iny						     ; the screen character coords
-		lda SCREEN_LINE_OFFSET_TABLE_LO,y
-		sta ZEROPAGE_POINTER_1
-		lda SCREEN_LINE_OFFSET_TABLE_HI,y
-		sta ZEROPAGE_POINTER_1 + 1
-		
-		ldy SPRITE_CHAR_POS_X,x				 ; fetch sprites X position, store it in Y
-;;		iny
-;;		iny
-
-		lda (ZEROPAGE_POINTER_1),y
-		jsr TestBlocking
-		bne @downBlocked
-		
-
-;;		lda SPRITE_POS_X_DELTA,x				; Check X delta to see if we're flush on the X axis
-;;		beq @downCheck2						 ; if not we need to check 2 characters
-		
-;;		ldy SPRITE_CHAR_POS_Y,x				 ; fetch character Y position and store it in Y
-;;		iny								     ; add 1
-
-;;		lda SCREEN_LINE_OFFSET_TABLE_LO,y       ; fetch address for the screen line
-;;		sta ZEROPAGE_POINTER_1
-;;		lda SCREEN_LINE_OFFSET_TABLE_HI,y
-;;		sta ZEROPAGE_POINTER_1 + 1
-		
-;;		ldy SPRITE_CHAR_POS_X,x				 ; fetch X character pos for sprite
-;;		iny								     ; increase by 1
-;;		lda (ZEROPAGE_POINTER_1),y		      ; fetch character at this position
-
-;;		jsr TestBlocking
-;;       bne @downBlocked
-
-;; @downCheck2								     ; Check character above the sprite
-;;		ldy SPRITE_CHAR_POS_Y,x				 ; load the sprite Y character position
-;;		iny								     ; add 1
-
-;;		lda SCREEN_LINE_OFFSET_TABLE_LO,y       ; fetch address for screen line
-;;		sta ZEROPAGE_POINTER_1
-;;		lda SCREEN_LINE_OFFSET_TABLE_HI,y
-;;		sta ZEROPAGE_POINTER_1 + 1
-		
-;;		ldy SPRITE_CHAR_POS_X,x				 ; fetch X character position and store in Y
-
-;;		lda (ZEROPAGE_POINTER_1),y		      ; fetch character off screen and store in A
-		
-;;		jsr TestBlocking						; test for blocking
-;;		bne @downBlocked
-
-		lda #0								   ; if not blocking return 0
+?Unblocked
+		lda #$00								  ; return value #0 = not blocked
 		rts
 
-@downBlocked
-		lda #1								  ; if blocked return 1
+?Blocked
+		lda #$01				       ; we can't move, so load a #1 in A and return
 		rts
+
 ;; #endregion		
 
 ;=================================================================================
 ;												   TEST CHARACTER FOR BLOCKING
+;
+;; For now, any character with high bit set is an impenetrable rock
 ;=================================================================================
+.LOCAL
 TestBlocking
  ;;       cmp #128				      ; is the character > 128?
-		and #$80 ;; If it is any inverse
-		bne @blocking  ;;  or bmi works here too
+		and #$80 ;; If it is any inverse character
+		bne ?Blocking  ;;  or bmi works here too
 		
 		lda #0
 		rts
-@blocking
+		
+?Blocking
 		lda #1
 		rts
+
+
+;=================================================================================
+;												   Common Left and Right
+; X == sprite number.
+;
+; PARAM7 == Adjusted X Column (by caller)
+; PARAM6 == starting index into COLLIDE_LOOKUP_Y from converted DELTA Y value 
+; PARAM5 == Starting POS Y determined from current POS Y and COLLIDE_LOOKUP_Y entry
+; Y == PARAM5, ready to use to determine screen memory
+;=================================================================================
+.LOCAL
+TestCollisionX
+        ;; Check a vertical line of characters to the left or right
+        ;; of the current position.
+
+		;; Convert Y delta into array entry starting offset (y * 5)
+		clc
+        lda SPRITE_POS_Y_DELTA,x ;; first normalize to 0
+        adc #$03               ;; -3 to 4 adjusted to  0 to 7
+        sta PARAM6          ;; now multiply times 5
+        asl ;; * 2
+		asl ;; * 4
+		clc
+		adc PARAM6 ;; + (* 1) == * 5
+		sta PARAM6 ;; Now it is a starting value for walking through COLLIDE_LOOKUP_Y
+
+		;; acquire initial adjusted character Y position.
+		clc
+		tay
+		lda SPRITE_CHAR_POS_Y,x
+		adc COLLIDE_LOOKUP_Y,y   ; Yes, adding $fe or $ff actually subtracts.  and ignore the carry.
+		sta PARAM5
+		
+		tay ;; 
+
+		;; at this point:
+		;; PARAM6 is the index into COLLIDE_LOOKUP_Y
+		;; PARAM5 is the test Y location adjusted by COLLIDE_LOOKUP_Y
+
+?loopTestY ;; Test position, return Z flag blocked or not.
+        ;; acquire the pointer to screen memory
+        jsr Load_Pointer1_As_Screen  		;; Y is the value of PARAM5 and ready to use to determine screen memory...
+
+		ldy PARAM7    ;; Get POS X to adjust screen location
+
+		;; test adjusted screen memory location.  
+		lda (ZEROPAGE_POINTER_1),y		      ; fetch the character from screen mem
+		jsr TestBlocking					; test to see if it blocks
+
+		bne ?Blocked				; Z clear, not blocked.  Z set, blocked.
+
+		;; Check the next location in COLLIDE_LOOKUP_Y
+		inc PARAM6
+		ldy PARAM6
+		lda COLLIDE_LOOKUP_Y,y
+		beq ?Unblocked   ;; a 0 entry is the end of array, so we're clear to move
+
+		;; Continue testing.
+		;; increment the Y position and retest.
+		inc PARAM5
+		ldy PARAM5
+		bne ?loopTestY   ;; continue testing. 
+
+?Unblocked
+		lda #$00								  ; return value #0 = not blocked
+		rts
+
+?Blocked
+		lda #$01				       ; we can't move, so load a #1 in A and return
+		rts
+
+
+;=================================================================================
+;												   Common Up and Down
+;
+; X == sprite number.
+;
+; PARAM7 == Starting POS X determined from current POS X and COLLIDE_LOOKUP_X entry
+; PARAM6 == starting index into COLLIDE_LOOKUP_X from converted DELTA X value 
+; PARAM5 == Adjusted Y Row (by caller)
+; Y == PARAM5,  to determine screen memory
+;=================================================================================
+.LOCAL
+TestCollisionY
+        ;; To check a Horizontal line of characters above or below
+        ;; the current position some initialization:
+
+		;; Convert X delta into array entry starting offset (X * 4)
+		clc
+        lda SPRITE_POS_X_DELTA,x ;; first normalize to 0
+        adc #$01               ;; -1 to 2 adjusted to  0 to 3
+        ;; now multiply times 4
+        asl ;; * 2
+		asl ;; * 4
+
+		sta PARAM6 ;; Now it is a starting value for walking through COLLIDE_LOOKUP_X
+
+		;; acquire initial adjusted character X position.
+		clc
+		tay
+		lda SPRITE_CHAR_POS_X,x
+		adc COLLIDE_LOOKUP_X,y   ; Yes, adding $ff actually subtracts.  and ignore the carry.
+		sta PARAM7
+
+		ldy PARAM5 ;; Y row for testing
+
+        ;; acquire the pointer to screen memory
+        jsr Load_Pointer1_As_Screen ;; Y is the value of PARAM5  to determine screen memory...
+		
+		;; at this point:
+		;; PARAM6 is the index into COLLIDE_LOOKUP_X
+		;; PARAM7 is the test X location adjusted by COLLIDE_LOOKUP_X
+		
+?loopTestX ;; Test position, return Z flag blocked or not.
+		ldy PARAM7    ;; Get POS X to adjust screen location
+		
+		;; test adjusted screen memory location.  
+		lda (ZEROPAGE_POINTER_1),y		      ; fetch the character from screen mem
+		jsr TestBlocking					; test to see if it blocks
+
+		bne ?Blocked				; Z clear, not blocked.  Z set, blocked.
+
+		;; Check the next location in COLLIDE_LOOKUP_X
+		inc PARAM6
+		ldy PARAM6
+		lda COLLIDE_LOOKUP_X,y
+		beq ?Unblocked   ;; a 0 entry is the end of array, so we're clear to move
+
+		;; Continue testing.
+		;; increment the X position and retest.
+		inc PARAM7
+		bne ?loopTestX   ;; continue testing. 
+
+?Unblocked
+		lda #$00								  ; return value #0 = not blocked
+		rts
+
+?Blocked
+		lda #$01				       ; we can't move, so load a #1 in A and return
+		rts
+
+
+;=================================================================================
+;								Load screen row base address into ZeroPage_Pointer1
+; Inputs:
+; Y == Y character row position.
+;
+; Outputs:
+;
+;=================================================================================
+Load_Pointer1_As_Screen
+        ;; acquire the pointer to screen memory
+		lda SCREEN_LINE_OFFSET_TABLE_LO,y       ; store the address in ZEROPAGE_POINTER_1
+		sta ZEROPAGE_POINTER_1
+		lda SCREEN_LINE_OFFSET_TABLE_HI,y
+		sta ZEROPAGE_POINTER_1 + 1
+    rts
 

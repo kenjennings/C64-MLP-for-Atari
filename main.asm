@@ -1,7 +1,7 @@
 ;===================================================================================================
 ; C64 Brain Assembly Language Project Framework 1.1
 ; 2016 - Peter 'Sig' Hewett aka RetroRomIcon
-;; C64 Project source available at:
+; C64 Project source available at:
 ;; https://drive.google.com/drive/folders/0B2awXrw3k0FPZ1EtYUh1S1BrTm8
 ;;
 ;; Atari-fied for eclipse/wudsn/atasm by Ken Jennings
@@ -91,18 +91,31 @@
 ;;		  new image into the Player/Missile memory map.
 ;;		* The sprite animation is redone.  The animation counter is moved into the
 ;;		  frame counter. This simplifies a lot of movement code that was setting
-;;		  and changing animation frame.
+;;		  and changing animation frames.
 ;;		* Collision detection (character position alignment) is mostly broken, because
 ;;		  I vandalized the code by attempting to center the Players on the center of 
 ;;		  characters.  This has messed up the math, so the controllable player object 
 ;;		  overlaps character edges where it should not. 
 ;;		  FIXING THIS IS TO DO FOR 1.3beta.
-
+;;
+;; 1.3beta -- Atari version.
+;;		* Guess what?  Collision detection is fixed.  (Aka. collision avoidance.)
+;;		  The Player can move anywhere and has pixel perfect movement to the 
+;;		  limit of any blocking characters on the playfield. (Any character 
+;;		  with the high bit set is treated as blocking.)  This is the only 
+;;		  place where original code is deleted and redone from scratch.
+;;		  The logic is table driven, so left/right is largely one single block  
+;;		  of common code, and up/down is another set.
+;;		* To test the boundary/collision code more walls have been added
+;;		  to the playfield 
+;; 
 ;-------------------------------------------------------------------------------------------------
 ;; #endreg
 
-		*=$2000 	; After Atari DOS 2.0s
-;;		*=$3308 	; After Atari DOS 2.0s and DUP
+ .include "DOS.asm" ;; Need this for the LOMEM start and run address.
+
+		*=LOMEM_DOS ;; $2000 	; After Atari DOS 2.0s
+;;		*=LOMEM_DOS_DUP ;; $3308 	; After Atari DOS 2.0s and DUP
 PRG_START 
 
 ;===============================================================================
@@ -425,14 +438,56 @@ Screen_Setup
 		sta PARAM3
 		jsr DrawHLine
 
-		lda #15
+		lda #25
 		sta PARAM1
 		lda #11
 		sta PARAM2
-		lda #20
+		lda #30
 		sta PARAM3
 		jsr DrawHLine
 
+;;
+;; Draw some maze-y-ness to test collision detection.
+;; Note Atari Player has a minimum coverage of 2 chars x 3 chars.
+;; C64 covers 3 chars x 3 chars.
+;; So, a maze drawn for Atari with vertical halls
+;; only 2 chars wide won't allow a C64 sprite.
+;; Remember to use 3.
+;;
+		lda #4				  ; X character coord
+		sta PARAM1
+		lda #7				  ; Y character coord
+		sta PARAM2
+		lda #12			      ;  end Y character coord
+		sta PARAM3
+		jsr DrawVLine
+
+		lda #4				  
+		sta PARAM1		      ; starting at X 
+		lda #7				 
+		sta PARAM2		      ; starting at Y 
+		lda #8
+		sta PARAM3		      ; ending at X 
+		jsr DrawHLine
+
+		lda #11				  ; X character coord
+		sta PARAM1
+		lda #3				  ; Y character coord
+		sta PARAM2
+		lda #12			      ;  end Y character coord
+		sta PARAM3
+		jsr DrawVLine
+
+		lda #4			  ; Top Wall
+		sta PARAM1		      ; starting at X 
+		lda #11				 
+		sta PARAM2		      ; starting at Y 
+		lda #11
+		sta PARAM3		      ; ending at X 
+		jsr DrawHLine
+				
+
+;; 
 ;; #endregion
 		;------------------------------------------------------------------------
 		;												       SPRITE SETUP
@@ -486,8 +541,10 @@ Screen_Setup
 		lda #0 ;; not really necessary, but animation base frame should be set
 		sta ANIM_FRAME
 
+		lda #19
+		sta PARAM1		      ; Character column 19 (X coord)
+
 		lda #10
-		sta PARAM1		      ; Character column 10 (X coord)
 		sta PARAM2		      ; Character row 10 (Y coord)
 
 		LDX #0	 ; Sprite # in X (0)
@@ -640,11 +697,11 @@ UpdateSprites
 ; 8  to 11 == Down
 ; 12 to 15 == Right
 ; 16 to 19 == Left
-										; Fetch Joystick X and move horizontally
 
-		ldx #$00						; Sprite 0 in X
-		lda JOY_X				       ; fetch Joystick X position
-		
+		ldx #$00						; Sprite 0 in X		
+
+		lda JOY_X				       ; Fetch Joystick X and move horizontally
+
 		sta SPRITE_DIRECTION,x		  ; store this in SPRITE_DIRECTION for sprite 0
 						       
 										; now we test this data from the joystick. it can only
@@ -700,11 +757,13 @@ doUpAndDown
 		ldx #0
 		jsr CanMoveDown		;; Check if we can move down
 		bne @done  
+		
 		ldx #0				 ;; yes, moving down.
 		lda SPRITE_DIRECTION,x ;; But if there is currently horizontal ...
 		bne ?noFrameDown       ;; motion then we can't disply the down frames.
 		lda #8				 ;; No horizontal motion means ...
 		sta ANIM_FRAME,x       ;; display the down frames.
+
 ?noFrameDown
 		jsr MoveSpriteDown		      ; if it's positive, we move it down
 		jmp @done				       ; and move on to the animation
@@ -713,11 +772,13 @@ doUpAndDown
 		ldx #0
 		jsr CanMoveUp ;; Check if we can move up
 		bne @done
+		
 		ldx #0				 ;; yes, moving up.
 		lda SPRITE_DIRECTION,x ;; But if there is currently horizontal ...
 		bne ?noFrameUp		 ;; motion then we can't disply the up frames.
 		lda #4				 ;; No horizontal motion means ...
 		sta ANIM_FRAME,x       ;; display the up frames.
+
 ?noFrameUp		
 		jsr MoveSpriteUp		      
 
@@ -1095,7 +1156,6 @@ AnimTest2
 ;;		jmp ?updateAnim
 								    ; Update the displayed frame
 ?updateAnim
-
 		clc
 		lda ANIM_FRAME,x			;; make sure we have current sprite's base frame
 		adc ANIM_COUNTER			;; 0 to 3 frame offset maintained during TIMER increment
@@ -1165,7 +1225,7 @@ PM_RUNNER
 ;; Contrary to popular opinion the Atari is not limited to 192 scan lines.
 ;; The display list below results in the same 200 scan lines of 
 ;; multi-color character text as the C64/VIC-II. (and it need not stop at 200.)
-;;.byte "Display List"
+
 DISPLAY_LIST
 ;;  20 blank scan lines for spacing...
 ;; last blank instruction includes a DLI flag
@@ -1184,24 +1244,21 @@ DISPLAY_LIST
 ;; End with the jump to vertical blank
 	.BYTE DL_JUMP_VB
 	.WORD DISPLAY_LIST
-;;	.byte "End of Display List"
+
 														; Timer Variables
 TIMER												   ; Fast timer updates every frame
-;;		Byte $0
-	.BYTE 0
-SLOW_TIMER										      ; Slow timer updates every 16th frame
-;;		Byte $0
 	.BYTE 0
 
-;;	.byte "Version Text:"	
+SLOW_TIMER										      ; Slow timer updates every 16th frame
+	.BYTE 0
+
 VERSION_TEXT
 ;;		byte 'mlp framework v1.3',0
 	.SBYTE +$80,"mlp framework v1.3 by peter sig hewett"
 	.BYTE $9B
-	.SBYTE "ATARI PORT V1.3ALPHA BY KEN JENNINGS"
+	.SBYTE "ATARI PORT V1.3BETA BY KEN JENNINGS"
 	.BYTE $FF
 	
-;;	.byte "Console Text:"
 CONSOLE_TEXT
 ;;		byte ' xpos:$     ypos:$    chrx:$   chry:$   / dltx:$     dlty:$				      ',0
 
@@ -1213,78 +1270,65 @@ CONSOLE_TEXT
 	.SBYTE +$80,"ypos:   chry:   dlty:   "
 	.BYTE $FF
 
-;; .byte "End text."
 ;---------------------------------------------------------------------------------------------------
 ;																				       JOYSTICK
-;;  .byte "JOY_X"
+
 JOY_X						   ; current positon of Joystick(2)
-;;		byte $00				; -1 0 or +1
-	.BYTE $00
-;;  .byte "JOY_Y" 	
+	.BYTE $00				; -1 0 or +1
+
 JOY_Y
-;;		byte $00				; -1 0 or +1
-	.BYTE $00
-;;  .byte "BUTTON_PRESSED"
+	.BYTE $00				; -1 0 or +1
+
 BUTTON_PRESSED				  ; holds 1 when the button is held down
-;;		byte $00
 	.BYTE $00
-;;	.byte "BUTTON_ACTION"
+
 BUTTON_ACTION				   ; holds 1 when a single press is made (button released)
-;;		byte $00
 	.BYTE $00		
 ;---------------------------------------------------------------------------------------------------
 ;																				       SPRITES
-;;  .byte "SPRITE_POS_X"
 SPRITE_POS_X										    ; Hardware sprite X position
 	.BYTE $00,$00,$00,$00,$00,$00,$00,$00
-;;		.byte "SPRITE_POS_X_DELTE"
+
 SPRITE_POS_X_DELTA								      ; Delta X positon (0-7) - position within
 	.BYTE $00,$00,$00,$00,$00,$00,$00,$00		    ; a character
-;;  .byte "SPRITE_CHAR_POS_X"
+
 SPRITE_CHAR_POS_X								       ; Char pos X - sprite position in character
 	.BYTE $00,$00,$00,$00,$00,$00,$00,$00			 ; coords (0-40)
-;;	.byte "SPRITE_DELTA_TRIM_X"
+
 SPRITE_DELTA_TRIM_X
 	.BYTE $00,$00,$00,$00,$00,$00,$00,$00 		    ; Trim delta for better collisions
-;;  .byte "SPRITE_POS_X_EXTEND"
-SPRITE_POS_X_EXTEND								     ; extended flag for X positon > 255
-;;		byte $00										; bits 0-7 correspond to sprite numbers
-	.BYTE $00
-;;  .byte "SPRITE_POS_Y"
+
+SPRITE_POS_X_EXTEND								     ; extended flag for X positon > 255									
+	.BYTE $00										; bits 0-7 correspond to sprite numbers
+
 SPRITE_POS_Y										    ; Hardware sprite Y position
 	.BYTE $00,$00,$00,$00,$00,$00,$00,$00
-;;		.byte "SPRITE_POS_Y_DELTA"
+
 SPRITE_POS_Y_DELTA
 	.BYTE $00,$00,$00,$00,$00,$00,$00,$00
-;;		.byte "SPRITE_CHAR_POS_Y"
+
 SPRITE_CHAR_POS_Y
 	.BYTE $00,$00,$00,$00,$00,$00,$00,$00
 												; Some variables for the anim demo - direction the
 												; sprite is moving (left or right) and the current frame
-;;  .byte "SPRITE_DIRECTION"
 SPRITE_DIRECTION
 	.BYTE $00,$01,$00,$00,$00,$00,$00,$00  ; Direction of the sprite (-1 0 1)
 
 ;;  I think there should be a separate direction managed for X and Y.
-;;  .byte "SPRITE_DIRECTION_Y"
 SPRITE_DIRECTION_Y
 	.BYTE $00,$01,$00,$00,$00,$00,$00,$00		; Direction of the sprite (-1 0 1)
 
-;;  .byte "ANIM_FRAME"
 ANIM_FRAME
 	.BYTE $00,$00,$00,$00,$00,$00,$00,$00	   ; Current animation base frame  
 
-;;  .byte "ANIM_COUNTER"
 ANIM_COUNTER
 	.BYTE $00				;; animation frame counter -- 0 to 3
 	
-;;   .Byte "ANIMATE_FLAG"
 ANIMATE_FLAG
 ;;										       ;; Every few frame ticks this toggles 1 to flag 
 ;;										       ;; the time to update sprite images.
 	.BYTE $00
 
-;; .byte "PMADR_BASE"
 ;; Atari -- need a lookup for base address of the player/missiles.
 ;; since P/M memory is always aligned to a page, the low byte for
 ;; address is always zero, so only the high byte is needed for the
@@ -1365,7 +1409,7 @@ MASK_TABLE_REV
 ; or have it checked in options or BAD THINGS WILL HAPPEN!! It basically means that calculations
 ; will be performed BEFORE giving back the hi/lo byte with '>' rather than the default of
 ; hi/lo byte THEN the calculation
-;;	.byte "Screen Line offset table lo"
+
 SCREEN_LINE_OFFSET_TABLE_LO		
 ;;		  byte <SCREEN_MEM				      
 ;;		  byte <SCREEN_MEM + 40				 
@@ -1398,7 +1442,6 @@ SCREEN_LINE_OFFSET_TABLE_LO
 	.BYTE <[SCREEN_MEM+[r*40]]
 	r .= r+1
 	.ENDR
-;;	.byte "Screen line offset table hi"	
 SCREEN_LINE_OFFSET_TABLE_HI
 ;;		  byte >SCREEN_MEM
 ;;		  byte >SCREEN_MEM + 40
@@ -1431,19 +1474,18 @@ SCREEN_LINE_OFFSET_TABLE_HI
 	.BYTE >[SCREEN_MEM+[r*40]]
 	r .= r+1
 	.ENDR
-;;	.byte "End of screen line data"
 
 ;; --------------------------------------------------------------------
 ;; Align to the next nearest 2K boundary for 
 ;; single-line resolution Player/Missiles
 	*=[*&$F800]+$0800 
 PLAYER_MISSILE_BASE  ;; Player/missile memory goes here.
-;;	.BYTE "Player/Missile memory" 
 
 ;; --------------------------------------------------------------------
 
-;; Atari RUN ADDRESS
-	*=$02e0
+;; Store the program start location in 
+;; the Atari DOS RUN Address
+	*=DOS_RUN_ADDR
 	.word PRG_START
 
 ;; --------------------------------------------------------------------
