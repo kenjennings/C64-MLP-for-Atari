@@ -1,4 +1,7 @@
 # C64-MLP-for-Atari
+
+Video of animation and collision detection testing on YouTube: https://www.youtube.com/watch?v=L3D9Z8X0SMI
+
 Atari port of C64 Machine Language Project
 
 [![AtariMLPScreen](https://github.com/kenjennings/C64-MLP-for-Atari/blob/master/AtariMLP.png)](#features)
