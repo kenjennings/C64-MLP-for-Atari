@@ -22,6 +22,8 @@ NOTE that there are TWO release versions here.  1.03a is an earlier version with
 Features implemented in demo...
 - Custom character set
 - Playfield (text character) horizontal/Vertical line drawing
+- Simple text printing.
+- Byte value to Hex text conversion and display.
 - Joystick input
 - Animated player/missile graphics
 - Player/Missile to Playfield (text character) collision **anticipation**.
