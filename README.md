@@ -1,7 +1,7 @@
 # C64-MLP-for-Atari
 
 Atari port of C64 Machine Language Project: https://github.com/smorrow8859/C64-Machine_Language_Project
-(Note that the current version of MLP is 1.3 and this port is for the earlier 1.0)
+(Note that this port is for the earlier version of 1.3.  The current version has a few more updates and different animated sprites.)
 
 ---
 
@@ -11,7 +11,7 @@ Video of animation and collision detection testing on YouTube: https://www.youtu
 
 ---
 
-Includes all files duplicated from original C64 MLP with edits specific to Atari.  Intent is to port from C64 to Atari with the MINIMAL amount of necessary changes.  In some cases the less Atari-like choices are made to make this appear more like the C64 original.
+Includes all files duplicated from original C64 MLP with edits specific to Atari.  The intent here is to port from C64 to Atari with the MINIMAL amount of necessary changes.  The less Atari-like choices are made in some cases to make this appear more like the C64 original.
 
 Extra files not relevant to Atari are still included here, but are not actually used by the Atari assembly. e.g. C64 sprite files.
 
